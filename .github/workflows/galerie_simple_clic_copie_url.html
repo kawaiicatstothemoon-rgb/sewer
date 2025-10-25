@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Galerie (clic -> copie URL)</title>
+  <style>
+    /* Reset */
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%}
+    body{
+      background:#111;
+      display:flex;
+      align-items:flex-start;
+      justify-content:flex-start;
+      gap:8px;
+      padding:8px;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;
+      overflow:auto;
+    }
+
+    /* Gallery row, images one next to another */
+    .gallery{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      width:100%;
+    }
+
+    .thumb{
+      width:160px;
+      height:160px;
+      object-fit:cover;
+      border-radius:8px;
+      cursor:pointer;
+      user-select:none;
+      transition:transform .12s ease, box-shadow .12s ease;
+      box-shadow: 0 2px 6px rgba(0,0,0,.6);
+    }
+    .thumb:active{transform:scale(.98)}
+    .thumb.copied{outline:4px solid rgba(255,255,255,.12);box-shadow:0 0 0 4px rgba(0,200,83,.12),0 8px 24px rgba(0,0,0,.6)}
+
+    /* Floating upload button (icon only, no visible text) */
+    .upload-btn{
+      position:fixed;
+      right:18px;
+      top:18px;
+      width:52px;height:52px;
+      border-radius:999px;
+      display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(180deg,#222,#111);
+      box-shadow:0 6px 18px rgba(0,0,0,.6);
+      border:1px solid rgba(255,255,255,.04);
+      cursor:pointer;
+      z-index:40;
+    }
+
+    /* Hidden file input cover so click opens file dialog */
+    input[type=file]{display:none}
+
+    /* Minimal indicator when dragging */
+    .drop-hint{
+      position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity .12s ease;z-index:30
+    }
+    .drop-hint.show{opacity:.92}
+    .drop-hint .box{width:60%;max-width:560px;padding:24px;border-radius:12px;border:2px dashed rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))}
+
+    /* tiny toast (icon only) */
+    .toast{
+      position:fixed;left:50%;transform:translateX(-50%);bottom:22px;padding:8px 12px;border-radius:999px;background:rgba(0,0,0,.6);backdrop-filter: blur(4px);display:flex;align-items:center;gap:8px;opacity:0;pointer-events:none;transition:opacity .12s ease;z-index:50
+    }
+    .toast.show{opacity:1;pointer-events:auto}
+
+    /* hide any text on page (user asked for none) */
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+  </style>
+</head>
+<body>
+  <div class="gallery" id="gallery" aria-hidden="false"></div>
+
+  <!-- floating upload button (icon SVG only) -->
+  <label class="upload-btn" title="Ajouter des images" id="addBtn" aria-hidden="false">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M12 5v14" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+      <path d="M5 12h14" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+    </svg>
+    <input id="fileInput" type="file" accept="image/*,video/*" multiple />
+  </label>
+
+  <!-- drag/drop hint (no text visible) -->
+  <div class="drop-hint" id="dropHint" aria-hidden="true">
+    <div class="box" id="dropBox"></div>
+  </div>
+
+  <!-- toast (icon only) -->
+  <div class="toast" id="toast" role="status" aria-live="polite">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M20 6L9 17l-5-5" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+
+  <span class="sr-only">Utilisez le bouton en haut à droite pour ajouter des images. Cliquez sur une image pour copier son URL.</span>
+
+  <script>
+    (function(){
+      const gallery = document.getElementById('gallery');
+      const fileInput = document.getElementById('fileInput');
+      const dropHint = document.getElementById('dropHint');
+      const toast = document.getElementById('toast');
+
+      // Add images from File/Blob by converting to data URL so copied link works outside session
+      function addFileAsDataURL(file){
+        const reader = new FileReader();
+        reader.onload = ()=> addImageToGallery(reader.result);
+        reader.readAsDataURL(file);
+      }
+
+      // Add an image element given src (can be data:, blob:, http(s):...)
+      function addImageToGallery(src){
+        const img = document.createElement('img');
+        img.src = src;
+        img.className = 'thumb';
+        img.loading = 'lazy';
+        img.draggable = false;
+
+        img.addEventListener('click', async (ev)=>{
+          ev.preventDefault();
+          try{
+            await navigator.clipboard.writeText(img.src);
+            showCopiedFeedback(img);
+          }catch(e){
+            // fallback: select a temporary textarea
+            const ta = document.createElement('textarea');
+            ta.value = img.src; document.body.appendChild(ta); ta.select();
+            try{ document.execCommand('copy'); showCopiedFeedback(img);}catch(_){ alert('Impossible de copier automatiquement.'); }
+            ta.remove();
+          }
+        });
+
+        gallery.appendChild(img);
+      }
+
+      function showCopiedFeedback(img){
+        img.classList.add('copied');
+        showToast();
+        setTimeout(()=> img.classList.remove('copied'),900);
+      }
+
+      function showToast(){
+        toast.classList.add('show');
+        clearTimeout(window._toastTimeout);
+        window._toastTimeout = setTimeout(()=> toast.classList.remove('show'),900);
+      }
+
+      fileInput.addEventListener('change', ()=>{
+        const files = Array.from(fileInput.files || []);
+        files.forEach(f=> addFileAsDataURL(f));
+        fileInput.value = '';
+      });
+
+      // Drag & drop
+      function prevent(e){ e.preventDefault(); e.stopPropagation(); }
+      ['dragenter','dragover'].forEach(ev=> window.addEventListener(ev, (e)=>{ prevent(e); dropHint.classList.add('show'); }));
+      ['dragleave','drop'].forEach(ev=> window.addEventListener(ev, (e)=>{ prevent(e); if(ev==='drop' || !e.dataTransfer) dropHint.classList.remove('show'); else dropHint.classList.remove('show'); }));
+
+      window.addEventListener('drop', (e)=>{
+        prevent(e);
+        const dt = e.dataTransfer;
+        if(!dt) return;
+        if(dt.files && dt.files.length) Array.from(dt.files).forEach(f=> addFileAsDataURL(f));
+        else if(dt.items){ // might be a URL dragged
+          for(const it of dt.items){
+            if(it.kind === 'string'){
+              it.getAsString(s=>{
+                // If string looks like URL, add as image src
+                if(s && (s.startsWith('http')|| s.startsWith('data:'))) addImageToGallery(s.trim());
+              });
+            }else if(it.kind==='file'){
+              const file = it.getAsFile(); if(file) addFileAsDataURL(file);
+            }
+          }
+        }
+      });
+
+      // Allow paste (Ctrl+V) of images/URLs directly into page
+      window.addEventListener('paste', (e)=>{
+        const items = e.clipboardData && e.clipboardData.items;
+        if(!items) return;
+        for(const it of items){
+          if(it.type.startsWith('image/')){
+            const file = it.getAsFile(); if(file) addFileAsDataURL(file);
+          }else if(it.kind==='string'){
+            it.getAsString(s=>{ if(s && (s.startsWith('http')|| s.startsWith('data:'))) addImageToGallery(s.trim()); });
+          }
+        }
+      });
+
+      // Allow adding by programmatic URL paste via drop or via drag from other pages.
+      // Simple helper: if user drags an image from another tab, browser provides URL in items.
+
+      // initial friendly demo images (comment out if you want an empty start)
+      /*addImageToGallery('https://images.unsplash.com/photo-1541698444083-023c97d3f4b6?auto=format&fit=crop&w=800&q=60');
+      addImageToGallery('https://images.unsplash.com/photo-1518791841217-8f162f1e1131?auto=format&fit=crop&w=800&q=60');*/
+
+      // keyboard: allow Delete or Backspace on focused image to remove it
+      gallery.addEventListener('keydown', (e)=>{
+        const el = document.activeElement;
+        if(el && el.classList && el.classList.contains('thumb') && (e.key==='Delete' || e.key==='Backspace')) el.remove();
+      });
+
+      // make added images focusable by keyboard (for accessibility) and support arrow navigation
+      const obs = new MutationObserver((mut)=>{
+        mut.forEach(m=> m.addedNodes && m.addedNodes.forEach(n=>{
+          if(n.nodeType===1 && n.tagName==='IMG'){
+            n.tabIndex = 0;
+            n.addEventListener('keydown', (e)=>{
+              if(e.key==='Enter' || e.key===' ') { e.preventDefault(); n.click(); }
+              if(e.key==='ArrowRight') { if(n.nextElementSibling) n.nextElementSibling.focus(); }
+              if(e.key==='ArrowLeft') { if(n.previousElementSibling) n.previousElementSibling.focus(); }
+            });
+          }
+        }));
+      });
+      obs.observe(gallery, {childList:true});
+
+      // allow clicking empty space to open file dialog (optional)
+      document.body.addEventListener('click', (e)=>{
+        // if clicked on body (not on an image or upload button), do nothing
+      });
+
+    })();
+  </script>
+</body>
+</html>
